@@ -12,10 +12,16 @@
         font: 14px/1.5 system-ui, sans-serif; color: #c9d1e0;
         background: rgba(0, 0, 0, 0.45); padding: 4px 10px; border-radius: 4px;
       }
+      #status {
+        position: fixed; top: 40%; left: 50%; transform: translateX(-50%); pointer-events: none;
+        font: 18px/1.5 system-ui, sans-serif; color: #fff; text-align: center; max-width: 80%;
+        background: rgba(0, 0, 0, 0.7); padding: 12px 20px; border-radius: 6px;
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="status" hidden></div>
     <div id="help">A/D เดิน · W/Space กระโดด (กดค้าง = สูงขึ้น) · เมาส์เล็ง คลิกยิง · 1/2/3 เปลี่ยนปืน · H ดูกรอบชน</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

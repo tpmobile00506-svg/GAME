@@ -3,11 +3,15 @@
 // ห้ามใช้ Math.random() หรือ Date.now() ในไฟล์นี้: ทุกอย่างต้องมาจาก state, input และ ctx
 import { isSolid, type GameMap } from './map.ts';
 import type { PlayerInput } from './messages.ts';
-import { WEAPONS, WEAPON_SWITCH_TIME, type WeaponId } from './weapons.ts';
+import { WEAPONS, WEAPON_SLOTS, WEAPON_SWITCH_TIME, type WeaponId } from './weapons.ts';
 
 /** ค่าฟิสิกส์ทั้งหมด หน่วยเป็นพิกเซลและวินาที */
 export const PHYSICS = {
-  /** แบ่งคำนวณกี่รอบย่อยต่อ 1 tick ยิ่งมากยิ่งไม่ทะลุพื้น (2 รอบที่ 30 tick = ละเอียดเท่า 60 Hz) */
+  /**
+   * แบ่งคำนวณกี่รอบย่อยต่อ 1 tick ยิ่งมากยิ่งไม่ทะลุพื้น (2 รอบที่ 30 tick = ละเอียดเท่า 60 Hz)
+   * เซิร์ฟเวอร์ใช้ค่านี้ตั้ง setFixedTimestep(..., { subSteps }) แล้ว Colyseus ส่งต่อให้ client เอง
+   * ใน stepPlayer ห้ามอ่านค่านี้ตรงๆ ให้อ่าน ctx.subSteps / ctx.subDt
+   */
   substeps: 2,
   gravity: 1800,
   maxFallSpeed: 900,
@@ -40,17 +44,28 @@ export interface PlayerState {
   coyote: number;
   /** เวลาที่เหลือของ jump buffer */
   jumpBuffer: number;
-  weapon: WeaponId;
+  /** ปืนที่ถืออยู่ เป็นลำดับใน WEAPON_SLOTS (เก็บเป็นตัวเลข เพราะ prediction ของ Colyseus เทียบตัวเลขได้แม่นกว่าข้อความ) */
+  weapon: number;
   /** เวลาที่เหลือก่อนยิงนัดถัดไปได้ */
   cooldown: number;
   aim: number;
 }
 
+/** ข้อมูลเวลาของ 1 tick ฝั่งเซิร์ฟเวอร์ได้จาก setFixedTimestep ฝั่ง client ได้จาก reconciler ของ Colyseus */
 export interface StepContext {
   /** เวลาของ 1 tick เป็นวินาที */
   readonly dt: number;
+  /** จำนวนรอบย่อยของฟิสิกส์ต่อ 1 tick */
+  readonly subSteps: number;
+  /** เวลาของ 1 รอบย่อยเป็นวินาที (dt / subSteps) */
+  readonly subDt: number;
   /** true = กำลังคำนวณซ้ำเพื่อแก้ตำแหน่งตามเซิร์ฟเวอร์ ห้ามเล่นเสียงหรือเอฟเฟกต์ */
   readonly isReplay: boolean;
+}
+
+/** ชื่อปืนที่ผู้เล่นถืออยู่ */
+export function weaponOf(p: PlayerState): WeaponId {
+  return WEAPON_SLOTS[p.weapon] ?? 'pistol';
 }
 
 /** ผลของการยิง 1 ครั้ง: ยิงจากไหน กี่เม็ด มุมอะไร (ยังไม่รู้ว่าโดนอะไร ต้องเรียก resolveShot ต่อ) */
@@ -82,7 +97,7 @@ export function createPlayer(x: number, feetY: number): PlayerState {
     onGround: false,
     coyote: 0,
     jumpBuffer: 0,
-    weapon: 'pistol',
+    weapon: 0,
     cooldown: 0,
     aim: 0,
   };
@@ -147,8 +162,9 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
 
   // input ที่ผิดรูปแบบ (มุมไม่ใช่ตัวเลขจริง ปืนไม่มีในรายการ) ไม่เอามาใช้ กันเกมค้างหรือพัง
   if (Number.isFinite(input.aim)) p.aim = input.aim;
-  if (input.switchTo !== null && input.switchTo !== p.weapon && Object.hasOwn(WEAPONS, input.switchTo)) {
-    p.weapon = input.switchTo;
+  const slot = input.switchTo - 1;
+  if (Number.isInteger(slot) && slot >= 0 && slot < WEAPON_SLOTS.length && slot !== p.weapon) {
+    p.weapon = slot;
     p.cooldown = Math.max(p.cooldown, WEAPON_SWITCH_TIME);
   }
 
@@ -156,8 +172,8 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
   if (input.jumpPressed) p.jumpBuffer = PHYSICS.jumpBufferTime;
 
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  const h = ctx.dt / PHYSICS.substeps;
-  for (let i = 0; i < PHYSICS.substeps; i++) {
+  const h = ctx.subDt;
+  for (let i = 0; i < ctx.subSteps; i++) {
     const accel = p.onGround ? PHYSICS.groundAccel : PHYSICS.airAccel;
     p.vx = approach(p.vx, dir * PHYSICS.runSpeed, accel * h);
 
@@ -177,12 +193,13 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
   }
 
   // ปืน: step ดูแลแค่คูลดาวน์กับการตัดสินว่ายิงออกไปไหม ส่วนโดนอะไรใช้ resolveShot
-  const weapon = WEAPONS[p.weapon];
+  const weaponId = weaponOf(p);
+  const weapon = WEAPONS[weaponId];
   const pulledTrigger = weapon.automatic ? input.fire : input.firePressed;
   if (!pulledTrigger || p.cooldown > EPS) return null;
   p.cooldown = weapon.fireInterval;
   return {
-    weapon: p.weapon,
+    weapon: weaponId,
     x: p.x,
     y: p.y + PHYSICS.shoulderY,
     angles: weapon.spread.map((offset) => p.aim + offset),

@@ -189,19 +189,20 @@ flowchart LR
 - [x] เขียน unit test ฟิสิกส์ด้วย Vitest
 - [x] README, CREDITS.md และ push ขึ้น GitHub
 - [x] ให้ Gemini รีวิวโค้ดเฟส 1 และแก้ตามข้อที่เห็นด้วยแล้ว
-- [ ] สร้าง `main` บน GitHub จากงานเฟส 1 และตั้งเป็น branch หลัก (ครั้งนี้ยังไม่มี `main` ให้เปิด Pull Request เข้าไป ตั้งแต่เฟส 2 ใช้ Pull Request ตามปกติ)
-- [ ] ผ่านด่าน: ลองเล่นแล้วปรับค่าใน `PHYSICS` จนกระโดดรู้สึกแม่นมือ
+- [x] สร้าง `main` บน GitHub จากงานเฟส 1 (ครั้งนี้ยังไม่มี `main` ให้เปิด Pull Request เข้าไป ตั้งแต่เฟส 2 ใช้ Pull Request ตามปกติ)
+- [x] ผ่านด่าน: ลองเล่นแล้วกระโดดรู้สึกแม่นมือ
 
 **เฟส 2: ออนไลน์ขั้นแรก**
 
-- [ ] ตั้ง CI บน GitHub Actions (typecheck + test) และให้ `main` รับงานผ่าน Pull Request เท่านั้น
+- [x] ตั้ง CI บน GitHub Actions (typecheck + test)
+- [ ] ตั้งค่า GitHub ให้ `main` รับงานผ่าน Pull Request เท่านั้น (Settings → Branches)
 - [ ] เลือกสไตล์ art กับชุด asset หลัก แล้วเปลี่ยนตัวละครและ tileset จาก placeholder
 - [ ] อ่านบทสอน Colyseus + Phaser และบทความ Gambetta เพื่อเข้าใจแนวคิด (ไม่ต้องเขียนตาม)
-- [ ] สร้าง GameRoom ใช้ `setFixedTimestep` และ `defineInput` ประกาศ Schema แบบฟังก์ชัน ไม่ใช้ decorator
-- [ ] client ใช้ `room.input()` + `Predict` กับตัวเอง และ `lerp` กับคนอื่น
-- [ ] เซิร์ฟเวอร์เช็ก input ทุกชุดตามหัวข้อ "ความปลอดภัยและความเสถียร"
-- [ ] โหมด debug วาดตำแหน่งจริงจากเซิร์ฟเวอร์ทับตำแหน่งที่ทำนาย
-- [ ] ทดสอบ 2 แท็บพร้อมดีเลย์จำลอง และเช็กว่าสลับแท็บแล้วกลับมาไม่พัง
+- [x] สร้าง GameRoom ใช้ `setFixedTimestep` และ `defineInput` ประกาศ Schema แบบฟังก์ชัน ไม่ใช้ decorator (`shared/src/netschema.ts`)
+- [x] client ใช้ `room.input()` + `Predict` กับตัวเอง และ `lerp` กับคนอื่น
+- [x] เซิร์ฟเวอร์เช็ก input ทุกชุดตามหัวข้อ "ความปลอดภัยและความเสถียร" (`sanitize` ของ Colyseus + `stepPlayer` เช็กปืนซ้ำ)
+- [x] โหมด debug วาดตำแหน่งจริงจากเซิร์ฟเวอร์ทับตำแหน่งที่ทำนาย (กด H)
+- [x] ทดสอบ 2 แท็บพร้อมดีเลย์จำลอง 150 ms และเช็กว่าสลับแท็บแล้วกลับมาไม่พัง
 - [ ] เปิด tunnel ให้เพื่อนเข้าจากอีกเครือข่าย
 
 **เฟส 3: ยิงกันออนไลน์**

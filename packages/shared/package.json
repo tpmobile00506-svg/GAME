@@ -9,6 +9,9 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p ."
   },
+  "dependencies": {
+    "@colyseus/schema": "~5.0.50"
+  },
   "devDependencies": {
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"

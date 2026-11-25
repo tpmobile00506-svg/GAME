@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { TICK_RATE } from './index.ts';
 import { ARENA, type GameMap } from './map.ts';
-import type { PlayerInput } from './messages.ts';
-import { PHYSICS, createPlayer, resolveShot, stepPlayer, traceRay, type PlayerState, type ShotEvent, type StepContext } from './step.ts';
-import { WEAPONS, WEAPON_SLOTS, type WeaponId } from './weapons.ts';
+import { emptyInput, type PlayerInput } from './messages.ts';
+import { PHYSICS, createPlayer, resolveShot, stepPlayer, traceRay, weaponOf, type PlayerState, type ShotEvent, type StepContext } from './step.ts';
+import { WEAPONS, WEAPON_SLOTS } from './weapons.ts';
 
 /** สร้างแมพทดสอบจากตัวอักษร: '#' = tile ชนได้, '.' = ว่าง */
 function mapFromAscii(rows: readonly string[]): GameMap {
@@ -33,17 +33,11 @@ const ROOM = mapFromAscii([
 const FLOOR_Y = 9 * 32;
 const LEDGE_Y = 5 * 32;
 
-const CTX: StepContext = { dt: 1 / TICK_RATE, isReplay: false };
-const IDLE: PlayerInput = {
-  left: false,
-  right: false,
-  jump: false,
-  jumpPressed: false,
-  fire: false,
-  firePressed: false,
-  aim: 0,
-  switchTo: null,
-};
+const DT = 1 / TICK_RATE;
+const CTX: StepContext = { dt: DT, subSteps: PHYSICS.substeps, subDt: DT / PHYSICS.substeps, isReplay: false };
+const IDLE: PlayerInput = emptyInput();
+const RIFLE = WEAPON_SLOTS.indexOf('rifle');
+const SHOTGUN = WEAPON_SLOTS.indexOf('shotgun');
 /** tick แรกของการกดปุ่ม: กดลงใหม่ + กดค้าง */
 const PRESS_JUMP = { jump: true, jumpPressed: true };
 const PRESS_FIRE = { fire: true, firePressed: true };
@@ -187,7 +181,7 @@ describe('coyote time และ jump buffer', () => {
 describe('ปืน', () => {
   it('ไรเฟิลกดค้างยิง 10 นัดต่อวินาที', () => {
     const p = standingPlayer(6 * 32);
-    p.weapon = 'rifle';
+    p.weapon = RIFLE;
     expect(ticks(p, ROOM, TICK_RATE, { fire: true })).toHaveLength(10);
   });
 
@@ -201,15 +195,16 @@ describe('ปืน', () => {
 
   it('ลูกซองยิง 5 เม็ด มุมคงที่รอบมุมเล็ง', () => {
     const p = standingPlayer(6 * 32);
-    p.weapon = 'shotgun';
+    p.weapon = SHOTGUN;
     const shot = tick(p, ROOM, { ...PRESS_FIRE, aim: 0.5 });
+    expect(shot?.weapon).toBe('shotgun');
     expect(shot?.angles).toEqual(WEAPONS.shotgun.spread.map((offset) => 0.5 + offset));
   });
 
   it('สลับปืนแล้วต้องรอ 0.2 วินาที (6 tick) พอดีก่อนยิงได้', () => {
     const p = standingPlayer(6 * 32);
-    expect(tick(p, ROOM, { switchTo: 'rifle', ...PRESS_FIRE })).toBeNull();
-    expect(p.weapon).toBe('rifle');
+    expect(tick(p, ROOM, { switchTo: RIFLE + 1, ...PRESS_FIRE })).toBeNull();
+    expect(weaponOf(p)).toBe('rifle');
     let firstShotTick = -1;
     for (let i = 1; i <= 10 && firstShotTick < 0; i++) {
       if (tick(p, ROOM, { fire: true })) firstShotTick = i;
@@ -248,8 +243,10 @@ describe('input ผิดรูปแบบ', () => {
     const p = standingPlayer(6 * 32);
     const shot = tick(p, ROOM, { ...PRESS_FIRE, aim: Number.NaN });
     expect(shot?.angles.every(Number.isFinite)).toBe(true);
-    tick(p, ROOM, { switchTo: 'bazooka' as unknown as WeaponId });
-    expect(p.weapon).toBe('pistol');
+    tick(p, ROOM, { switchTo: 99 });
+    tick(p, ROOM, { switchTo: 1.5 });
+    tick(p, ROOM, { switchTo: Number.NaN });
+    expect(weaponOf(p)).toBe('pistol');
   });
 });
 
@@ -264,7 +261,7 @@ describe('determinism', () => {
       fire: i % 11 < 3,
       firePressed: i % 11 === 0,
       aim: ((i * 0.07) % (2 * Math.PI)) - Math.PI,
-      switchTo: i % 120 === 0 ? (WEAPON_SLOTS[(i / 120) % WEAPON_SLOTS.length] ?? null) : null,
+      switchTo: i % 120 === 0 ? ((i / 120) % WEAPON_SLOTS.length) + 1 : 0,
     };
   }
 

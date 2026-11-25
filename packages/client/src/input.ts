@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { WEAPON_SLOTS, type PlayerInput, type WeaponId } from '@armor/shared';
+import { WEAPON_SLOTS, type PlayerInput } from '@armor/shared';
 
 /**
  * อ่านคีย์บอร์ดกับเมาส์ แล้วสรุปเป็น PlayerInput 1 ชุดต่อ tick
@@ -14,7 +14,8 @@ export class InputSampler {
   private readonly pointer: Phaser.Input.Pointer;
   private jumpPressed = false;
   private firePressed = false;
-  private switchTo: WeaponId | null = null;
+  /** 0 = ไม่ได้กดเปลี่ยนปืน, 1–3 = กดปุ่ม 1/2/3 */
+  private switchTo = 0;
 
   constructor(scene: Phaser.Scene) {
     const keyboard = scene.input.keyboard;
@@ -28,9 +29,9 @@ export class InputSampler {
         this.jumpPressed = true;
       });
     }
-    WEAPON_SLOTS.forEach((id, i) => {
+    WEAPON_SLOTS.forEach((_id, i) => {
       keyboard.addKey(K.ONE + i).on('down', () => {
-        this.switchTo = id;
+        this.switchTo = i + 1;
       });
     });
 
@@ -55,7 +56,7 @@ export class InputSampler {
     };
     this.jumpPressed = false;
     this.firePressed = false;
-    this.switchTo = null;
+    this.switchTo = 0;
     return input;
   }
 }
