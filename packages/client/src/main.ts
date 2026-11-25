@@ -16,7 +16,7 @@ const game = new Phaser.Game({
   scene: [GameScene],
 });
 
-// ตอน dev เปิด console แล้วพิมพ์ game ได้ เช่น game.scene.getScene('game').me.state ไว้ดู state ที่ทำนาย
+// ตอน dev เปิด console แล้วพิมพ์ game ได้ เช่น game.scene.getScene('game').myState() ไว้ดู state ที่ทำนาย
 if (import.meta.env.DEV) Object.assign(window, { game });
 
 // เปิดหน้าด้วย ?netdebug จะมีแผง debug ของ Colyseus ไว้ดูว่าฟิสิกส์สองฝั่งตรงกันไหม (drift)

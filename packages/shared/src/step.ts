@@ -162,7 +162,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
 
   // input ที่ผิดรูปแบบ (มุมไม่ใช่ตัวเลขจริง ปืนไม่มีในรายการ) ไม่เอามาใช้ กันเกมค้างหรือพัง
   if (Number.isFinite(input.aim)) p.aim = input.aim;
-  const slot = input.switchTo - 1;
+  const slot = input.switchTo;
   if (Number.isInteger(slot) && slot >= 0 && slot < WEAPON_SLOTS.length && slot !== p.weapon) {
     p.weapon = slot;
     p.cooldown = Math.max(p.cooldown, WEAPON_SWITCH_TIME);

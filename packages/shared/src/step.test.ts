@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TICK_RATE } from './index.ts';
 import { ARENA, type GameMap } from './map.ts';
-import { emptyInput, type PlayerInput } from './messages.ts';
+import { NO_SWITCH, emptyInput, type PlayerInput } from './messages.ts';
 import { PHYSICS, createPlayer, resolveShot, stepPlayer, traceRay, weaponOf, type PlayerState, type ShotEvent, type StepContext } from './step.ts';
 import { WEAPONS, WEAPON_SLOTS } from './weapons.ts';
 
@@ -203,7 +203,7 @@ describe('ปืน', () => {
 
   it('สลับปืนแล้วต้องรอ 0.2 วินาที (6 tick) พอดีก่อนยิงได้', () => {
     const p = standingPlayer(6 * 32);
-    expect(tick(p, ROOM, { switchTo: RIFLE + 1, ...PRESS_FIRE })).toBeNull();
+    expect(tick(p, ROOM, { switchTo: RIFLE, ...PRESS_FIRE })).toBeNull();
     expect(weaponOf(p)).toBe('rifle');
     let firstShotTick = -1;
     for (let i = 1; i <= 10 && firstShotTick < 0; i++) {
@@ -244,6 +244,7 @@ describe('input ผิดรูปแบบ', () => {
     const shot = tick(p, ROOM, { ...PRESS_FIRE, aim: Number.NaN });
     expect(shot?.angles.every(Number.isFinite)).toBe(true);
     tick(p, ROOM, { switchTo: 99 });
+    tick(p, ROOM, { switchTo: -5 });
     tick(p, ROOM, { switchTo: 1.5 });
     tick(p, ROOM, { switchTo: Number.NaN });
     expect(weaponOf(p)).toBe('pistol');
@@ -261,7 +262,7 @@ describe('determinism', () => {
       fire: i % 11 < 3,
       firePressed: i % 11 === 0,
       aim: ((i * 0.07) % (2 * Math.PI)) - Math.PI,
-      switchTo: i % 120 === 0 ? ((i / 120) % WEAPON_SLOTS.length) + 1 : 0,
+      switchTo: i % 120 === 0 ? (i / 120) % WEAPON_SLOTS.length : NO_SWITCH,
     };
   }
 

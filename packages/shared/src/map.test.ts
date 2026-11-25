@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TICK_RATE } from './index.ts';
-import { ARENA, isSolid, parseTiledMap } from './map.ts';
+import { ARENA, isSolid, parseTiledMap, pickSpawn } from './map.ts';
 import { emptyInput } from './messages.ts';
 import { PHYSICS, createPlayer, stepPlayer } from './step.ts';
 
@@ -65,6 +65,17 @@ describe('แมพ', () => {
       expect(p.x).toBe(spawn.x);
       expect(p.y + PHYSICS.halfHeight).toBe(spawn.y);
     }
+  });
+
+  it('เลือกจุดเกิดที่ไกลจากผู้เล่นคนอื่นที่สุด', () => {
+    const spawns = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 300, y: 0 },
+    ];
+    expect(pickSpawn(spawns, [])).toEqual({ x: 0, y: 0 });
+    expect(pickSpawn(spawns, [{ x: 10, y: 0 }])).toEqual({ x: 300, y: 0 });
+    expect(pickSpawn(spawns, [{ x: 0, y: 0 }, { x: 300, y: 0 }])).toEqual({ x: 100, y: 0 });
   });
 
   it('แมพ arena: มีเพดาน กระสุนยิงขึ้นฟ้าไปหยุดที่ tile ไม่ใช่ขอบนอกแมพ', () => {

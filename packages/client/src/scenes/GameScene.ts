@@ -121,6 +121,7 @@ export class GameScene extends Phaser.Scene {
     setStatus(null);
 
     const { room, input, predict, callbacks } = net;
+    // ชนิดของพารามิเตอร์ใน callback นี้ TypeScript อนุมานไม่ได้ (ได้ unknown) จึงอ่านผู้เล่นจาก room.state ที่มีชนิดชัดเจนแทน
     callbacks.onAdd('players', (_entity, key) => {
       const sessionId = String(key);
       const entity = room.state.players.get(sessionId);
@@ -141,12 +142,20 @@ export class GameScene extends Phaser.Scene {
       this.myState = () => me.state;
     });
     callbacks.onRemove('players', (_entity, key) => this.removeView(String(key)));
-    room.onLeave((code) => setStatus(`หลุดจากเซิร์ฟเวอร์ (code ${code}) รีเฟรชหน้านี้เพื่อเข้าใหม่`));
+    // เน็ตหลุดชั่วคราว: SDK พยายามต่อใหม่เอง ถ้าไม่สำเร็จจะเป็น onLeave แล้วหยุดส่ง input ทั้งหมด
+    room.onDrop(() => setStatus('เน็ตหลุด กำลังต่อใหม่…'));
+    room.onReconnect(() => setStatus(null));
+    room.onLeave((code) => {
+      this.net = null;
+      this.myState = null;
+      setStatus(`หลุดจากเซิร์ฟเวอร์ (code ${code}) รีเฟรชหน้านี้เพื่อเข้าใหม่`);
+    });
   }
 
   update(): void {
     const net = this.net;
-    if (!net) return;
+    // ยังไม่ได้เข้าห้อง หรือยังไม่ได้สร้างตัวทำนายของตัวเอง: ยังไม่ส่ง input ไม่งั้นเซิร์ฟเวอร์จะได้ input ที่ client ไม่ได้บันทึกไว้
+    if (!net || !this.myState) return;
 
     // 1) ถึงเวลากี่ fixed step แล้ว 2) ส่ง input ทีละ step 3) ค่อยอ่านค่ามาวาด
     const steps = net.predict.tick();
