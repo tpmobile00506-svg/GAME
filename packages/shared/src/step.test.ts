@@ -3,7 +3,7 @@ import { TICK_RATE } from './index.ts';
 import { ARENA, type GameMap } from './map.ts';
 import type { PlayerInput } from './messages.ts';
 import { PHYSICS, createPlayer, resolveShot, stepPlayer, traceRay, type PlayerState, type ShotEvent, type StepContext } from './step.ts';
-import { WEAPONS, WEAPON_SLOTS } from './weapons.ts';
+import { WEAPONS, WEAPON_SLOTS, type WeaponId } from './weapons.ts';
 
 /** สร้างแมพทดสอบจากตัวอักษร: '#' = tile ชนได้, '.' = ว่าง */
 function mapFromAscii(rows: readonly string[]): GameMap {
@@ -34,10 +34,22 @@ const FLOOR_Y = 9 * 32;
 const LEDGE_Y = 5 * 32;
 
 const CTX: StepContext = { dt: 1 / TICK_RATE, isReplay: false };
-const IDLE: PlayerInput = { left: false, right: false, jump: false, fire: false, aim: 0, weapon: 'pistol' };
+const IDLE: PlayerInput = {
+  left: false,
+  right: false,
+  jump: false,
+  jumpPressed: false,
+  fire: false,
+  firePressed: false,
+  aim: 0,
+  switchTo: null,
+};
+/** tick แรกของการกดปุ่ม: กดลงใหม่ + กดค้าง */
+const PRESS_JUMP = { jump: true, jumpPressed: true };
+const PRESS_FIRE = { fire: true, firePressed: true };
 
 function tick(p: PlayerState, map: GameMap, input: Partial<PlayerInput> = {}): ShotEvent | null {
-  return stepPlayer(p, { ...IDLE, weapon: p.weapon, ...input }, map, CTX);
+  return stepPlayer(p, { ...IDLE, ...input }, map, CTX);
 }
 
 function ticks(p: PlayerState, map: GameMap, n: number, input: Partial<PlayerInput> = {}): ShotEvent[] {
@@ -47,6 +59,17 @@ function ticks(p: PlayerState, map: GameMap, n: number, input: Partial<PlayerInp
     if (shot) shots.push(shot);
   }
   return shots;
+}
+
+/** กดกระโดดแล้วค้างไว้ n tick คืนความสูงสุดที่ขึ้นไปได้ (พิกเซล) */
+function holdJump(p: PlayerState, map: GameMap, n: number, extra: Partial<PlayerInput> = {}): number {
+  const startY = p.y;
+  let minY = p.y;
+  for (let i = 0; i < n; i++) {
+    tick(p, map, i === 0 ? { ...extra, ...PRESS_JUMP } : { ...extra, jump: true });
+    minY = Math.min(minY, p.y);
+  }
+  return startY - minY;
 }
 
 /** ผู้เล่นที่ยืนนิ่งบนพื้นห้องแล้ว */
@@ -73,13 +96,7 @@ describe('การเคลื่อนที่และการชน', () =
 
   it('กดกระโดดค้าง สูงประมาณ 3.6 tile แล้วกลับลงพื้น', () => {
     const p = standingPlayer(9 * 32);
-    const startY = p.y;
-    let minY = p.y;
-    for (let i = 0; i < 40; i++) {
-      tick(p, ROOM, { jump: true });
-      minY = Math.min(minY, p.y);
-    }
-    const rise = startY - minY;
+    const rise = holdJump(p, ROOM, 40);
     expect(rise).toBeGreaterThan(105);
     expect(rise).toBeLessThan(120);
     expect(p.onGround).toBe(true);
@@ -89,7 +106,7 @@ describe('การเคลื่อนที่และการชน', () =
     const p = standingPlayer(9 * 32);
     const startY = p.y;
     let minY = p.y;
-    tick(p, ROOM, { jump: true });
+    tick(p, ROOM, PRESS_JUMP);
     for (let i = 0; i < 40; i++) {
       tick(p, ROOM);
       minY = Math.min(minY, p.y);
@@ -102,12 +119,20 @@ describe('การเคลื่อนที่และการชน', () =
     ticks(p, ROOM, 3);
     let minTop = Infinity;
     for (let i = 0; i < 20; i++) {
-      tick(p, ROOM, { jump: true });
+      tick(p, ROOM, i === 0 ? PRESS_JUMP : { jump: true });
       minTop = Math.min(minTop, p.y - PHYSICS.halfHeight);
     }
     // ชนเพดานกลาง tick แล้วรอบย่อยถัดไปเริ่มตกลงเล็กน้อย จึงเช็กเป็นช่วง
     expect(minTop).toBeGreaterThanOrEqual(32);
     expect(minTop).toBeLessThan(34);
+  });
+
+  it('กดปุ่มกระโดดค้างไว้เฉยๆ ไม่กระโดดซ้ำ แต่ปล่อยแล้วกดใหม่ภายใน tick เดียวก็ยังกระโดด', () => {
+    const p = standingPlayer(9 * 32);
+    tick(p, ROOM, { jump: true });
+    expect(p.vy).toBeGreaterThanOrEqual(0);
+    tick(p, ROOM, PRESS_JUMP);
+    expect(p.vy).toBeLessThan(0);
   });
 });
 
@@ -119,7 +144,7 @@ describe('coyote time และ jump buffer', () => {
     for (let i = 0; i < 60 && p.onGround; i++) tick(p, ROOM, { right: true });
     expect(p.onGround).toBe(false);
     ticks(p, ROOM, waitTicks, { right: true });
-    tick(p, ROOM, { right: true, jump: true });
+    tick(p, ROOM, { right: true, ...PRESS_JUMP });
     return p.vy;
   }
 
@@ -131,7 +156,7 @@ describe('coyote time และ jump buffer', () => {
     expect(jumpAfterLeavingLedge(6)).toBeGreaterThan(0);
   });
 
-  /** ปล่อยผู้เล่นตกจากที่สูง แล้วเริ่มกดกระโดดค้างก่อนแตะพื้น pressEarly tick คืนว่าได้กระโดดไหม */
+  /** ปล่อยผู้เล่นตกจากที่สูง แล้วกดกระโดดก่อนแตะพื้น pressEarly tick (กดค้างไว้) คืนว่าได้กระโดดไหม */
   function jumpPressedBeforeLanding(pressEarly: number): boolean {
     const probe = createPlayer(9 * 32, 150);
     let landTick = 0;
@@ -144,7 +169,7 @@ describe('coyote time และ jump buffer', () => {
     // ก่อนลงพื้นตัวละครมีแต่ตก (vy > 0) ถ้าเห็น vy < 0 แปลว่ากระโดดแล้ว
     let jumped = false;
     for (let i = 0; i < pressEarly + 4; i++) {
-      tick(p, ROOM, { jump: true });
+      tick(p, ROOM, i === 0 ? PRESS_JUMP : { jump: true });
       if (p.vy < 0) jumped = true;
     }
     return jumped;
@@ -166,25 +191,30 @@ describe('ปืน', () => {
     expect(ticks(p, ROOM, TICK_RATE, { fire: true })).toHaveLength(10);
   });
 
-  it('ปืนพกกดค้างยิงนัดเดียว ต้องปล่อยแล้วกดใหม่', () => {
+  it('ปืนพกยิงเฉพาะตอนกดลงใหม่ กดค้างไม่ยิงซ้ำ', () => {
     const p = standingPlayer(6 * 32);
-    expect(ticks(p, ROOM, TICK_RATE, { fire: true })).toHaveLength(1);
-    const q = standingPlayer(6 * 32);
-    let shots = 0;
-    for (let i = 0; i < TICK_RATE; i++) if (tick(q, ROOM, { fire: i % 2 === 0 })) shots++;
-    expect(shots).toBeGreaterThanOrEqual(3);
+    expect(tick(p, ROOM, PRESS_FIRE)).not.toBeNull();
+    expect(ticks(p, ROOM, TICK_RATE, { fire: true })).toHaveLength(0);
+    // ปุ่มยังค้างอยู่ทุก tick แต่มีการปล่อยแล้วกดใหม่ระหว่าง tick ก็ต้องยิง
+    expect(tick(p, ROOM, PRESS_FIRE)).not.toBeNull();
   });
 
   it('ลูกซองยิง 5 เม็ด มุมคงที่รอบมุมเล็ง', () => {
     const p = standingPlayer(6 * 32);
     p.weapon = 'shotgun';
-    const shot = tick(p, ROOM, { fire: true, aim: 0.5 });
+    const shot = tick(p, ROOM, { ...PRESS_FIRE, aim: 0.5 });
     expect(shot?.angles).toEqual(WEAPONS.shotgun.spread.map((offset) => 0.5 + offset));
   });
 
-  it('เพิ่งสลับปืน ยิงไม่ได้ทันที', () => {
+  it('สลับปืนแล้วต้องรอ 0.2 วินาที (6 tick) พอดีก่อนยิงได้', () => {
     const p = standingPlayer(6 * 32);
-    expect(tick(p, ROOM, { weapon: 'rifle', fire: true })).toBeNull();
+    expect(tick(p, ROOM, { switchTo: 'rifle', ...PRESS_FIRE })).toBeNull();
+    expect(p.weapon).toBe('rifle');
+    let firstShotTick = -1;
+    for (let i = 1; i <= 10 && firstShotTick < 0; i++) {
+      if (tick(p, ROOM, { fire: true })) firstShotTick = i;
+    }
+    expect(firstShotTick).toBe(6);
   });
 
   it('กระสุนหยุดที่กำแพง', () => {
@@ -206,6 +236,23 @@ describe('ปืน', () => {
   });
 });
 
+describe('input ผิดรูปแบบ', () => {
+  it('มุม NaN หรือ Infinity ไม่ทำให้ค้าง และไม่นับว่ายิงโดน', () => {
+    expect(traceRay(ROOM, Number.NaN, 240, 0, 1000)).toBe(0);
+    expect(traceRay(ROOM, 176, 240, Number.POSITIVE_INFINITY, 1000)).toBe(0);
+    const box = { x: 300, y: 240, halfWidth: 12, halfHeight: 22 };
+    expect(resolveShot(ROOM, 176, 240, Number.NaN, 1000, [box]).target).toBe(-1);
+  });
+
+  it('stepPlayer ไม่ใช้มุม NaN และไม่สลับไปปืนที่ไม่มีในรายการ', () => {
+    const p = standingPlayer(6 * 32);
+    const shot = tick(p, ROOM, { ...PRESS_FIRE, aim: Number.NaN });
+    expect(shot?.angles.every(Number.isFinite)).toBe(true);
+    tick(p, ROOM, { switchTo: 'bazooka' as unknown as WeaponId });
+    expect(p.weapon).toBe('pistol');
+  });
+});
+
 describe('determinism', () => {
   /** input ที่สร้างจากเลข tick อย่างเดียว ไม่มีการสุ่ม */
   function scriptedInput(i: number): PlayerInput {
@@ -213,9 +260,11 @@ describe('determinism', () => {
       left: i % 90 < 30,
       right: i % 90 >= 50,
       jump: i % 37 < 5,
+      jumpPressed: i % 37 === 0,
       fire: i % 11 < 3,
+      firePressed: i % 11 === 0,
       aim: ((i * 0.07) % (2 * Math.PI)) - Math.PI,
-      weapon: WEAPON_SLOTS[Math.floor(i / 120) % WEAPON_SLOTS.length] ?? 'pistol',
+      switchTo: i % 120 === 0 ? (WEAPON_SLOTS[(i / 120) % WEAPON_SLOTS.length] ?? null) : null,
     };
   }
 

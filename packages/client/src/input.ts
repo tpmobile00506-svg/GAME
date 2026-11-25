@@ -3,17 +3,18 @@ import { WEAPON_SLOTS, type PlayerInput, type WeaponId } from '@armor/shared';
 
 /**
  * อ่านคีย์บอร์ดกับเมาส์ แล้วสรุปเป็น PlayerInput 1 ชุดต่อ tick
- * จอวาดเร็วกว่า tick (60–144 FPS เทียบกับ 30 tick) ถ้ากดแล้วปล่อยระหว่าง tick
- * ปุ่มนั้นจะหายไป จึงพักค่า "เคยกด" ไว้ (input latch) จนกว่าจะส่งใน tick ถัดไป
+ * จอวาดเร็วกว่า tick (60–144 FPS เทียบกับ 30 tick) จึงพักค่า "มีการกดใหม่" ไว้ (input latch)
+ * จนส่งใน tick ถัดไป กดแล้วปล่อย หรือปล่อยแล้วกดซ้ำภายใน tick เดียวก็ไม่หาย
+ * client ไม่จำว่าถือปืนอะไร แค่ส่งคำสั่งเปลี่ยนปืนตอนกด 1/2/3 ปืนจริงอยู่ใน PlayerState
  */
 export class InputSampler {
   private readonly left: Phaser.Input.Keyboard.Key[];
   private readonly right: Phaser.Input.Keyboard.Key[];
   private readonly jump: Phaser.Input.Keyboard.Key[];
   private readonly pointer: Phaser.Input.Pointer;
-  private jumpLatched = false;
-  private fireLatched = false;
-  private weapon: WeaponId = 'pistol';
+  private jumpPressed = false;
+  private firePressed = false;
+  private switchTo: WeaponId | null = null;
 
   constructor(scene: Phaser.Scene) {
     const keyboard = scene.input.keyboard;
@@ -24,24 +25,20 @@ export class InputSampler {
     this.jump = [keyboard.addKey(K.W), keyboard.addKey(K.UP), keyboard.addKey(K.SPACE)];
     for (const key of this.jump) {
       key.on('down', () => {
-        this.jumpLatched = true;
+        this.jumpPressed = true;
       });
     }
     WEAPON_SLOTS.forEach((id, i) => {
       keyboard.addKey(K.ONE + i).on('down', () => {
-        this.weapon = id;
+        this.switchTo = id;
       });
     });
 
     this.pointer = scene.input.activePointer;
     scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.leftButtonDown()) this.fireLatched = true;
+      if (pointer.leftButtonDown()) this.firePressed = true;
     });
     scene.input.mouse?.disableContextMenu();
-  }
-
-  get selectedWeapon(): WeaponId {
-    return this.weapon;
   }
 
   /** เรียก 1 ครั้งต่อ tick เท่านั้น เพราะจะล้างค่าที่พักไว้ */
@@ -49,13 +46,16 @@ export class InputSampler {
     const input: PlayerInput = {
       left: this.left.some((key) => key.isDown),
       right: this.right.some((key) => key.isDown),
-      jump: this.jumpLatched || this.jump.some((key) => key.isDown),
-      fire: this.fireLatched || this.pointer.leftButtonDown(),
+      jump: this.jumpPressed || this.jump.some((key) => key.isDown),
+      jumpPressed: this.jumpPressed,
+      fire: this.firePressed || this.pointer.leftButtonDown(),
+      firePressed: this.firePressed,
       aim,
-      weapon: this.weapon,
+      switchTo: this.switchTo,
     };
-    this.jumpLatched = false;
-    this.fireLatched = false;
+    this.jumpPressed = false;
+    this.firePressed = false;
+    this.switchTo = null;
     return input;
   }
 }

@@ -21,9 +21,9 @@ export interface GameMap {
   readonly dummySpawns: readonly Point[];
 }
 
-/** tile ที่ (tx, ty) ชนได้ไหม นอกขอบแมพนับว่าชนได้ ตัวละครจะได้ไม่หลุดออกไป */
+/** tile ที่ (tx, ty) ชนได้ไหม นอกขอบแมพหรือค่าที่ไม่ใช่ตัวเลขนับว่าชนได้ ตัวละครจะได้ไม่หลุดออกไป */
 export function isSolid(map: GameMap, tx: number, ty: number): boolean {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return true;
+  if (!(tx >= 0 && ty >= 0 && tx < map.width && ty < map.height)) return true;
   return map.solid[ty * map.width + tx] === 1;
 }
 

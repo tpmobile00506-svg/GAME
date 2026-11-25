@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TICK_RATE } from './index.ts';
 import { ARENA, isSolid, parseTiledMap } from './map.ts';
-import { createPlayer, stepPlayer } from './step.ts';
+import { PHYSICS, createPlayer, stepPlayer } from './step.ts';
 
 /** แมพ Tiled ขนาดเล็กที่ถูกต้อง แก้บางค่าเพื่อทดสอบกรณีผิดได้ */
 function tinyTiledMap(overrides: { solidLayer?: Record<string, unknown>; map?: Record<string, unknown> } = {}): unknown {
@@ -38,22 +38,34 @@ describe('แมพ', () => {
     expect(() => parseTiledMap(tinyTiledMap({ solidLayer: { name: 'ground' } }))).toThrow(/solid/);
   });
 
-  it('แมพ arena: จุดเกิดทุกจุดอยู่ในที่ว่างและมีพื้นรองเท้า', () => {
-    expect(ARENA.playerSpawns.length).toBeGreaterThan(0);
+  it('แมพ arena: มีจุดเกิด player อย่างน้อย 6 จุด ทุกจุดมีที่ว่างพอทั้งตัวและมีพื้นรองเท้า', () => {
+    expect(ARENA.playerSpawns.length).toBeGreaterThanOrEqual(6);
+    const t = ARENA.tileSize;
     for (const spawn of [...ARENA.playerSpawns, ...ARENA.dummySpawns]) {
-      const tx = Math.floor(spawn.x / ARENA.tileSize);
-      expect(isSolid(ARENA, tx, Math.floor((spawn.y - 1) / ARENA.tileSize))).toBe(false);
-      expect(isSolid(ARENA, tx, Math.floor(spawn.y / ARENA.tileSize))).toBe(true);
+      const where = `จุดเกิด (${spawn.x}, ${spawn.y})`;
+      const left = Math.floor((spawn.x - PHYSICS.halfWidth) / t);
+      const right = Math.floor((spawn.x + PHYSICS.halfWidth - 1e-6) / t);
+      const top = Math.floor((spawn.y - PHYSICS.halfHeight * 2) / t);
+      const bottom = Math.floor((spawn.y - 1e-6) / t);
+      for (let ty = top; ty <= bottom; ty++) {
+        for (let tx = left; tx <= right; tx++) expect(isSolid(ARENA, tx, ty), where).toBe(false);
+      }
+      expect(isSolid(ARENA, Math.floor(spawn.x / t), Math.floor(spawn.y / t)), where).toBe(true);
     }
   });
 
-  it('แมพ arena: เกิดแล้วยืนบนพื้นได้ ไม่ติดกำแพง', () => {
-    const spawn = ARENA.playerSpawns[0] ?? { x: 0, y: 0 };
-    const p = createPlayer(spawn.x, spawn.y);
-    for (let i = 0; i < 10; i++) {
-      stepPlayer(p, { left: false, right: false, jump: false, fire: false, aim: 0, weapon: 'pistol' }, ARENA, { dt: 1 / TICK_RATE, isReplay: false });
+  it('แมพ arena: เกิดที่จุดไหนก็ยืนบนพื้นได้ ไม่ขยับเอง', () => {
+    const idle = { left: false, right: false, jump: false, jumpPressed: false, fire: false, firePressed: false, aim: 0, switchTo: null };
+    for (const spawn of ARENA.playerSpawns) {
+      const p = createPlayer(spawn.x, spawn.y);
+      for (let i = 0; i < 10; i++) stepPlayer(p, idle, ARENA, { dt: 1 / TICK_RATE, isReplay: false });
+      expect(p.onGround).toBe(true);
+      expect(p.x).toBe(spawn.x);
+      expect(p.y + PHYSICS.halfHeight).toBe(spawn.y);
     }
-    expect(p.onGround).toBe(true);
-    expect(p.x).toBe(spawn.x);
+  });
+
+  it('แมพ arena: มีเพดาน กระสุนยิงขึ้นฟ้าไปหยุดที่ tile ไม่ใช่ขอบนอกแมพ', () => {
+    for (let tx = 0; tx < ARENA.width; tx++) expect(isSolid(ARENA, tx, 0)).toBe(true);
   });
 });

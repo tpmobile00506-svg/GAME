@@ -40,10 +40,6 @@ export interface PlayerState {
   coyote: number;
   /** เวลาที่เหลือของ jump buffer */
   jumpBuffer: number;
-  /** ปุ่มกระโดดใน tick ก่อน ใช้หาจังหวะ "เพิ่งกด" */
-  jumpHeld: boolean;
-  /** ปุ่มยิงใน tick ก่อน ใช้กับปืนที่ต้องกดทีละนัด */
-  fireHeld: boolean;
   weapon: WeaponId;
   /** เวลาที่เหลือก่อนยิงนัดถัดไปได้ */
   cooldown: number;
@@ -86,8 +82,6 @@ export function createPlayer(x: number, feetY: number): PlayerState {
     onGround: false,
     coyote: 0,
     jumpBuffer: 0,
-    jumpHeld: false,
-    fireHeld: false,
     weapon: 'pistol',
     cooldown: 0,
     aim: 0,
@@ -149,15 +143,17 @@ function moveY(p: PlayerState, dy: number, map: GameMap): void {
  * คืนค่า ShotEvent ถ้า tick นี้ยิงออกไป ไม่งั้นคืน null
  */
 export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx: StepContext): ShotEvent | null {
-  p.aim = input.aim;
-  if (input.weapon !== p.weapon) {
-    p.weapon = input.weapon;
+  p.cooldown = Math.max(0, p.cooldown - ctx.dt);
+
+  // input ที่ผิดรูปแบบ (มุมไม่ใช่ตัวเลขจริง ปืนไม่มีในรายการ) ไม่เอามาใช้ กันเกมค้างหรือพัง
+  if (Number.isFinite(input.aim)) p.aim = input.aim;
+  if (input.switchTo !== null && input.switchTo !== p.weapon && Object.hasOwn(WEAPONS, input.switchTo)) {
+    p.weapon = input.switchTo;
     p.cooldown = Math.max(p.cooldown, WEAPON_SWITCH_TIME);
   }
 
   // จำว่าเพิ่งกดกระโดด แล้วค่อยใช้ตอนแตะพื้น (jump buffer)
-  if (input.jump && !p.jumpHeld) p.jumpBuffer = PHYSICS.jumpBufferTime;
-  p.jumpHeld = input.jump;
+  if (input.jumpPressed) p.jumpBuffer = PHYSICS.jumpBufferTime;
 
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   const h = ctx.dt / PHYSICS.substeps;
@@ -173,7 +169,7 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
       p.jumpBuffer = 0;
     }
     p.jumpBuffer = Math.max(0, p.jumpBuffer - h);
-    if (!p.jumpHeld && p.vy < -PHYSICS.jumpCutSpeed) p.vy = -PHYSICS.jumpCutSpeed;
+    if (!input.jump && p.vy < -PHYSICS.jumpCutSpeed) p.vy = -PHYSICS.jumpCutSpeed;
 
     p.vy = Math.min(p.vy + PHYSICS.gravity * h, PHYSICS.maxFallSpeed);
     moveX(p, p.vx * h, map);
@@ -181,10 +177,8 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
   }
 
   // ปืน: step ดูแลแค่คูลดาวน์กับการตัดสินว่ายิงออกไปไหม ส่วนโดนอะไรใช้ resolveShot
-  p.cooldown = Math.max(0, p.cooldown - ctx.dt);
   const weapon = WEAPONS[p.weapon];
-  const pulledTrigger = input.fire && (weapon.automatic || !p.fireHeld);
-  p.fireHeld = input.fire;
+  const pulledTrigger = weapon.automatic ? input.fire : input.firePressed;
   if (!pulledTrigger || p.cooldown > EPS) return null;
   p.cooldown = weapon.fireInterval;
   return {
@@ -197,6 +191,8 @@ export function stepPlayer(p: PlayerState, input: PlayerInput, map: GameMap, ctx
 
 /** ยิงเส้นตรงจาก (x, y) ตามมุม angle คืนระยะถึง tile แรกที่ชน (ไม่เกิน maxDist) */
 export function traceRay(map: GameMap, x: number, y: number, angle: number, maxDist: number): number {
+  // ค่า NaN หรือ Infinity จะทำให้ลูปด้านล่างไม่มีวันจบ เซิร์ฟเวอร์ค้างทั้งห้อง
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(angle) || !Number.isFinite(maxDist)) return 0;
   const t = map.tileSize;
   const dx = Math.cos(angle);
   const dy = Math.sin(angle);
@@ -212,7 +208,8 @@ export function traceRay(map: GameMap, x: number, y: number, angle: number, maxD
   let nextX = dx > 0 ? ((tx + 1) * t - x) / dx : dx < 0 ? (tx * t - x) / dx : Infinity;
   let nextY = dy > 0 ? ((ty + 1) * t - y) / dy : dy < 0 ? (ty * t - y) / dy : Infinity;
 
-  for (;;) {
+  // นอกขอบแมพนับเป็น tile ชนได้ จึงเดินไม่เกิน width + height ช่องก็ต้องชนแน่นอน
+  for (let steps = 0; steps <= map.width + map.height + 2; steps++) {
     let dist: number;
     if (nextX < nextY) {
       dist = nextX;
@@ -226,10 +223,12 @@ export function traceRay(map: GameMap, x: number, y: number, angle: number, maxD
     if (dist >= maxDist) return maxDist;
     if (isSolid(map, tx, ty)) return dist;
   }
+  return 0;
 }
 
 /** ระยะที่เส้นจาก (x, y) ทิศ (dx, dy) ชนกล่อง หรือ null ถ้าไม่ชนภายใน maxDist */
 export function rayVsBox(x: number, y: number, dx: number, dy: number, box: Box, maxDist: number): number | null {
+  if (![x, y, dx, dy, maxDist].every(Number.isFinite)) return null;
   let near = 0;
   let far = maxDist;
   const axes: readonly [number, number, number, number][] = [

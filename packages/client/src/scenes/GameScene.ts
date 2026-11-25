@@ -8,15 +8,19 @@ import {
   WEAPON_SLOTS,
   createPlayer,
   isSolid,
+  playerBox,
   resolveShot,
   stepPlayer,
   type Box,
   type PlayerState,
   type ShotEvent,
+  type StepContext,
 } from '@armor/shared';
 import { InputSampler } from '../input.ts';
 
 const DT = 1 / TICK_RATE;
+/** demo เล่นคนเดียวยังไม่มีการคำนวณซ้ำ พอต่อออนไลน์ Predict ของ Colyseus จะส่ง ctx ที่มี isReplay จริงมาให้ */
+const CTX: StepContext = { dt: DT, isReplay: false };
 /** สลับแท็บแล้วกลับมา จะไม่ไล่คำนวณย้อนหลังเกินนี้ต่อเฟรม เกมจะได้ไม่เร่งเอง */
 const MAX_STEPS_PER_FRAME = 5;
 const GUN_LENGTH = 26;
@@ -121,8 +125,8 @@ export class GameScene extends Phaser.Scene {
     while (this.accumulator >= DT && steps < MAX_STEPS_PER_FRAME) {
       this.prevX = this.player.x;
       this.prevY = this.player.y;
-      const shot = stepPlayer(this.player, this.inputs.sample(this.aimAngle()), ARENA, { dt: DT, isReplay: false });
-      if (shot) this.showShot(shot);
+      const shot = stepPlayer(this.player, this.inputs.sample(this.aimAngle()), ARENA, CTX);
+      if (shot && !CTX.isReplay) this.showShot(shot);
       this.accumulator -= DT;
       steps++;
     }
@@ -142,11 +146,17 @@ export class GameScene extends Phaser.Scene {
     this.drawDebug();
   }
 
-  /** มุมจากไหล่ไปหาเมาส์ ใช้พิกัดโลก (ผ่านกล้อง) ไม่ใช่พิกัดบนจอ */
+  /**
+   * มุมจากไหล่ไปหาเมาส์ในพิกัดโลก
+   * - วัดจากตำแหน่งจริงใน state (จุดเดียวกับที่กระสุนออก) ไม่ใช่ตำแหน่งภาพที่ lerp ตามหลังอยู่
+   * - คิดจาก scroll ของกล้องเอง ไม่ใช้ getWorldPoint เพราะจะติดแรงจอสั่นมาด้วย (กล้องเกมนี้ไม่ซูม)
+   */
   private aimAngle(): number {
     const pointer = this.input.activePointer;
-    const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    return Math.atan2(world.y - (this.playerView.y + PHYSICS.shoulderY), world.x - this.playerView.x);
+    const camera = this.cameras.main;
+    const worldX = camera.scrollX + pointer.x;
+    const worldY = camera.scrollY + pointer.y;
+    return Math.atan2(worldY - (this.player.y + PHYSICS.shoulderY), worldX - this.player.x);
   }
 
   /** เอฟเฟกต์ฝั่ง client: ใน demo เล่นคนเดียวยังไม่มี replay พอต่อออนไลน์ต้องอยู่ใน if (!ctx.isReplay) */
@@ -162,7 +172,8 @@ export class GameScene extends Phaser.Scene {
       this.debugShots.push({ x1: shot.x, y1: shot.y, x2: hit.endX, y2: hit.endY });
 
       const dummy = this.dummies[hit.target];
-      if (dummy) this.hitDummy(dummy, weapon.damage, hit.endX, hit.endY, pellet);
+      const labelOffset = (pellet - (shot.angles.length - 1) / 2) * 6;
+      if (dummy) this.hitDummy(dummy, weapon.damage, hit.endX + labelOffset, hit.endY);
       else this.spark(hit.endX, hit.endY);
     });
     this.debugShots = this.debugShots.slice(-20);
@@ -183,12 +194,12 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: dot, alpha: 0, scale: 0.2, duration: 150, onComplete: () => dot.destroy() });
   }
 
-  private hitDummy(dummy: Dummy, damage: number, x: number, y: number, pellet: number): void {
+  private hitDummy(dummy: Dummy, damage: number, x: number, y: number): void {
     dummy.view.setFillStyle(0xffffff);
     this.time.delayedCall(60, () => dummy.view.setFillStyle(COLOR.dummy));
 
     const label = this.add
-      .text(x + (pellet - 2) * 6, y - 10, String(damage), {
+      .text(x, y - 10, String(damage), {
         fontFamily: 'monospace',
         fontSize: '16px',
         fontStyle: 'bold',
@@ -228,9 +239,9 @@ export class GameScene extends Phaser.Scene {
       g.strokeRect(box.x - box.halfWidth, box.y - box.halfHeight, box.halfWidth * 2, box.halfHeight * 2);
     }
 
-    const p = this.player;
+    const box = playerBox(this.player);
     g.lineStyle(2, 0xff00ff, 1);
-    g.strokeRect(p.x - PHYSICS.halfWidth, p.y - PHYSICS.halfHeight, PHYSICS.halfWidth * 2, PHYSICS.halfHeight * 2);
+    g.strokeRect(box.x - box.halfWidth, box.y - box.halfHeight, box.halfWidth * 2, box.halfHeight * 2);
 
     g.lineStyle(1, 0xff4040, 0.8);
     for (const s of this.debugShots) g.lineBetween(s.x1, s.y1, s.x2, s.y2);
