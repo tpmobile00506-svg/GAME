@@ -1,9 +1,16 @@
-import { ARENA, TICK_RATE } from '@armor/shared';
+import { Server } from '@colyseus/core';
+import { WebSocketTransport } from '@colyseus/ws-transport';
+import { TICK_RATE } from '@armor/shared';
+import { GameRoom } from './GameRoom.ts';
 
-// stub ของเฟส 1: พิสูจน์ว่า Node รัน TypeScript และอ่านแมพเดียวกับ client จาก shared ได้
-// เฟส 2 จะเปลี่ยนไฟล์นี้เป็นเซิร์ฟเวอร์ Colyseus (GameRoom + setFixedTimestep(1000 / TICK_RATE))
-const solidTiles = ARENA.solid.reduce((count, cell) => count + cell, 0);
+// จำลองเน็ตแลคตอนทดสอบ: ตั้งตัวแปร COLYSEUS_LATENCY (มิลลิวินาที ไป-กลับ) ก่อนรัน เช่น
+//   $env:COLYSEUS_LATENCY = '150'; pnpm dev:server
+const port = Number(process.env.PORT ?? 2567);
+
+const server = new Server({ transport: new WebSocketTransport(), greet: false });
+server.define('game', GameRoom);
+await server.listen(port);
+
 console.log(
-  `[server] stub OK, TICK_RATE = ${TICK_RATE}, map ${ARENA.width}x${ARENA.height} tiles ` +
-    `(${solidTiles} solid, ${ARENA.playerSpawns.length} player spawn). Colyseus comes in phase 2.`,
+  `[server] ws://localhost:${port} · ${TICK_RATE} tick/s · simulated latency ${process.env.COLYSEUS_LATENCY ?? 0} ms`,
 );

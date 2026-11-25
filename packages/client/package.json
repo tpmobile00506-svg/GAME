@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@armor/shared": "workspace:*",
+    "@colyseus/sdk": "~0.18.10",
     "phaser": "^4.2.1"
   },
   "devDependencies": {

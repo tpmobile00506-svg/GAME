@@ -5,15 +5,18 @@
 
 ## Stack (เวอร์ชันที่ติดตั้งจริง)
 - packages/client: Phaser 4.2 + TypeScript 7 + Vite 8
-- packages/server: Colyseus 0.18+ บน Node.js 24 (ใช้ netcode API ในตัว)
-- packages/shared: ฟิสิกส์ แมพ ข้อมูลปืน type ของข้อความ (test ด้วย Vitest 5)
-- จัดการแพ็กเกจด้วย pnpm 12
+- packages/server: Colyseus 0.18 (`@colyseus/core`, `@colyseus/ws-transport`) บน Node.js 24 ใช้ netcode API ในตัว
+- packages/client: ต่อเซิร์ฟเวอร์ด้วย `@colyseus/sdk` 0.18 (`Predict` ทำนายตัวเอง + lerp คนอื่น)
+- packages/shared: ฟิสิกส์ แมพ ข้อมูลปืน type ของข้อความ และ schema ที่ส่งผ่านเน็ต (`netschema.ts` ใช้ `@colyseus/schema` 5) test ด้วย Vitest 5
+- จัดการแพ็กเกจด้วย pnpm 12 (มีระบบกันแพ็กเกจที่เพิ่งออกไม่ถึง 1 วัน ห้ามปิดหรือเพิ่มข้อยกเว้นเอง ให้ใช้เวอร์ชันก่อนหน้าแทน)
 
 ## กฎห้ามฝ่าฝืน
 - เซิร์ฟเวอร์ตัดสินทุกอย่าง: client ส่งแค่ input (ปุ่มที่กด + มุมเล็ง + คำสั่งเปลี่ยนปืน) ห้ามส่งตำแหน่ง HP หรือปืนที่ถืออยู่ และ client ห้ามเก็บ state เกมไว้เอง
 - ฟิสิกส์และการชนอยู่ใน packages/shared/src/step.ts ไฟล์เดียว ทั้ง client และ server import ไปใช้
 - step() อ่านข้อมูลจาก input เท่านั้น ห้ามใช้ Math.random() หรือ Date.now() ข้างใน
-- อ่าน dt จาก ctx.dt ห้ามเขียน 1/60 เอง
+- อ่าน dt จาก ctx.dt และรอบย่อยจาก ctx.subSteps / ctx.subDt ห้ามเขียน 1/60 เอง (เซิร์ฟเวอร์ตั้งค่าที่ setFixedTimestep แล้ว Colyseus ส่งต่อให้ client)
+- ทำตามลำดับของ Colyseus ทุกเฟรม: `predict.tick()` → ส่ง input เท่าจำนวน step ที่ได้ → ค่อยอ่าน `predict.value()` มาวาด
+- ถ้าแก้ช่องใน `PlayerState` หรือ `PlayerInput` ต้องแก้ `shared/src/netschema.ts` ให้ตรงกัน (typecheck จะไม่ผ่านถ้าลืม) ตัวเลขฟิสิกส์ใน schema ใช้ `float64` เสมอ
 - ทุกค่าที่ step() ใช้ตัดสินใจต้องอยู่ใน state ของผู้เล่น (เช่น coyote time, jump buffer, คูลดาวน์ปืน) ห้ามเก็บไว้ฝั่ง client อย่างเดียว ไม่งั้นต่อออนไลน์แล้วตัวละครจะเด้งกลับ
 - ส่ง input 1 ครั้งต่อ fixed step และพักค่าปุ่มที่กดระหว่าง tick ไว้ (input latch) ไม่ให้คลิกสั้นๆ หาย การ "กดลงใหม่" ส่งเป็น `jumpPressed` / `firePressed` จาก client ห้ามหาเองใน step จากค่ากดค้าง
 - มุมเล็งคำนวณจากพิกัดในโลกเกม (ผ่านกล้อง) ไม่ใช่พิกัดบนจอ
@@ -35,7 +38,7 @@
 ## ข้อตกลงโค้ด
 - import ไฟล์ในโปรเจกต์ต้องใส่นามสกุล `.ts` เสมอ เช่น `import { stepPlayer } from './step.ts'` เพราะเซิร์ฟเวอร์รัน TypeScript ตรงด้วย Node โดยไม่ build
 - ห้ามใช้ `enum`, `namespace`, parameter property ใน constructor และ decorator (เช่น `@type`) เพราะ Node รันไม่ได้ ให้ใช้ object `as const` กับ union type แทน
-- Schema ของ Colyseus ให้ประกาศแบบฟังก์ชัน (schema builder) ไม่ใช้ `@type` decorator ชื่อ API ที่ถูกต้องให้เช็กจาก docs ของ 0.18 ตอนเริ่มเฟส 2
+- Schema ของ Colyseus ประกาศแบบฟังก์ชัน `schema({ x: t.float64() }, 'Name')` ไม่ใช้ `@type` decorator ดูตัวอย่างใน `shared/src/netschema.ts`
 - ห้ามเขียน API จากความจำ: Phaser 4 กับ Colyseus 0.18 ต่างจากตัวอย่างเก่าบนเว็บ (Phaser 3, Colyseus 0.14–0.16) ให้เช็ก type ใน node_modules หรือ docs ของเวอร์ชันที่ติดตั้งก่อนใช้
 - client กับ server import โค้ดกลางผ่าน `@armor/shared` เท่านั้น ห้าม import ข้ามแพ็กเกจด้วย path ตรง
 
@@ -57,15 +60,18 @@
 
 ## คำสั่ง (รันที่ root ของ repo)
 - `pnpm install` ติดตั้งทุกแพ็กเกจ
-- `pnpm dev` เปิดเกมที่ http://localhost:5173
-- `pnpm dev:server` รันเซิร์ฟเวอร์
+- `pnpm dev:server` รันเซิร์ฟเวอร์ที่ ws://localhost:2567 (เปิดค้างไว้อีกหน้าต่าง)
+- `pnpm dev` เปิดเกมที่ http://localhost:5173 (เปิดหลายแท็บ = หลายผู้เล่น)
 - `pnpm test` รัน unit test ของ shared (Vitest)
 - `pnpm typecheck` เช็ก type ทั้ง 3 แพ็กเกจ
 - `pnpm build` build ตัวเกมเป็นไฟล์ static
+- จำลองเน็ตแลค: `$env:COLYSEUS_LATENCY = '150'; pnpm dev:server` (มิลลิวินาที ไป-กลับ)
+- เปิดเกมด้วย `http://localhost:5173/?netdebug` จะมีแผงของ Colyseus ไว้ดูว่าฟิสิกส์สองฝั่งตรงกันไหม
 
 ## สถานะปัจจุบัน (อัปเดตทุกครั้งที่จบฟีเจอร์)
-- เฟส: 1 (งานครบแล้ว รอผ่านด่าน)
-- เสร็จแล้ว: ตั้ง repo, ปรับแผนตามรีวิวของ Gemini, demo เฟส 1 คือแมพ arena (shared/maps), stepPlayer() พร้อม sub-step / coyote / jump buffer, เล็งและยิงปืน 3 แบบใส่เป้าซ้อม, input latch, โหมด debug (H), แก้ตามรีวิวโค้ดของ Gemini (input แบบกดใหม่, กัน NaN, เพดานและจุดเกิด 6 จุด), test 24 ข้อ
+- เฟส: 2
+- เสร็จแล้ว: เฟส 1 ทั้งหมด, เฟส 2 ส่วน netcode คือ GameRoom (30 tick, 2 รอบย่อย, sanitize input), client ทำนายตัวเอง + lerp คนอื่น, โหมด debug แสดงตำแหน่งจริงจากเซิร์ฟเวอร์ (ฟ้า) ทับตำแหน่งที่ทำนาย (ม่วง), CI บน GitHub Actions
+- ทดสอบแล้ว: 2 แท็บเห็นกันขยับ, แลคจำลอง 150 ms ตัวเราขยับทันทีและไม่เด้งกลับ, ตำแหน่งที่ทำนายตรงกับเซิร์ฟเวอร์ทุกบิต, สลับแท็บแล้วกลับมาได้
 - กำลังทำ: -
-- ถัดไป: ผ่านด่านเฟส 1 (ลองเล่นแล้วปรับค่าใน PHYSICS ให้กระโดดแม่นมือ) แล้วเริ่มเฟส 2
-- หมายเหตุ: ภาพยังเป็น placeholder ที่สร้างเอง เปลี่ยนเป็น asset จริงได้ทีหลังโดยแก้แค่ tileset ใน Tiled
+- ถัดไป: เลือกสไตล์ art, เปิด tunnel ให้เพื่อนเข้าจากอีกเครื่อง (ด่านเฟส 2)
+- หมายเหตุ: ภาพยังเป็น placeholder ที่สร้างเอง ยิงได้แค่เป้าซ้อมในเครื่องตัวเอง (ยิงกันออนไลน์คือเฟส 3)

@@ -8,7 +8,10 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@armor/shared": "workspace:*"
+    "@armor/shared": "workspace:*",
+    "@colyseus/core": "~0.18.29",
+    "@colyseus/schema": "~5.0.50",
+    "@colyseus/ws-transport": "~0.18.5"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

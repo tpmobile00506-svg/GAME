@@ -3,31 +3,28 @@ import {
   ARENA,
   ARENA_TILED,
   PHYSICS,
-  TICK_RATE,
   WEAPONS,
   WEAPON_SLOTS,
-  createPlayer,
   isSolid,
-  playerBox,
   resolveShot,
   stepPlayer,
+  weaponOf,
   type Box,
+  type PlayerEntity,
   type PlayerState,
   type ShotEvent,
-  type StepContext,
 } from '@armor/shared';
 import { InputSampler } from '../input.ts';
+import { SERVER_URL, connectToGame, type NetSession } from '../net.ts';
+import { setStatus } from '../status.ts';
 
-const DT = 1 / TICK_RATE;
-/** demo เล่นคนเดียวยังไม่มีการคำนวณซ้ำ พอต่อออนไลน์ Predict ของ Colyseus จะส่ง ctx ที่มี isReplay จริงมาให้ */
-const CTX: StepContext = { dt: DT, isReplay: false };
-/** สลับแท็บแล้วกลับมา จะไม่ไล่คำนวณย้อนหลังเกินนี้ต่อเฟรม เกมจะได้ไม่เร่งเอง */
-const MAX_STEPS_PER_FRAME = 5;
 const GUN_LENGTH = 26;
 
 const COLOR = {
-  body: 0x4fa3d9,
-  bodyEdge: 0x1d4a66,
+  me: 0x4fa3d9,
+  meEdge: 0x1d4a66,
+  other: 0xe0a040,
+  otherEdge: 0x6b4a12,
   visor: 0xd8f0ff,
   gun: 0x1b1f27,
   dummy: 0xb84a4a,
@@ -41,6 +38,14 @@ interface Dummy {
   readonly view: Phaser.GameObjects.Rectangle;
 }
 
+interface PlayerView {
+  readonly entity: PlayerEntity;
+  readonly isMe: boolean;
+  readonly container: Phaser.GameObjects.Container;
+  readonly gun: Phaser.GameObjects.Rectangle;
+  readonly visor: Phaser.GameObjects.Rectangle;
+}
+
 interface DebugShot {
   readonly x1: number;
   readonly y1: number;
@@ -49,18 +54,16 @@ interface DebugShot {
 }
 
 /**
- * demo เฟส 1: เล่นคนเดียวบนแมพ arena
- * เกมเดินเป็น tick คงที่ (TICK_RATE) ด้วย stepPlayer จาก shared ส่วนภาพวาดแบบ lerp ระหว่าง tick ให้ลื่น
+ * ฉากเกมออนไลน์ (เฟส 2)
+ * ลำดับในแต่ละเฟรม (ตามกติกาของ Colyseus): predict.tick() → ส่ง input เท่าจำนวน step ที่ถึงเวลา → อ่านค่ามาวาด
+ * ตัวเราทำนายทันทีด้วย stepPlayer ตัวเดียวกับเซิร์ฟเวอร์ (reconciler) คนอื่นแสดงย้อนหลังเล็กน้อยให้ลื่น (lerp)
  */
 export class GameScene extends Phaser.Scene {
-  private player!: PlayerState;
-  private prevX = 0;
-  private prevY = 0;
-  private accumulator = 0;
+  private net: NetSession | null = null;
+  /** state ของตัวเราที่ทำนายไว้ (ค่าจริงสำหรับตรรกะเกม ไม่มีการทำให้ลื่น) null = ยังไม่ได้เข้าห้อง */
+  private myState: (() => PlayerState) | null = null;
+  private readonly views = new Map<string, PlayerView>();
   private inputs!: InputSampler;
-  private playerView!: Phaser.GameObjects.Container;
-  private gun!: Phaser.GameObjects.Rectangle;
-  private visor!: Phaser.GameObjects.Rectangle;
   private dummies: Dummy[] = [];
   private debug!: Phaser.GameObjects.Graphics;
   private debugOn = false;
@@ -81,6 +84,7 @@ export class GameScene extends Phaser.Scene {
     const tileset = map.addTilesetImage('placeholder', 'tiles');
     if (!tileset) throw new Error('โหลด tileset "placeholder" ไม่ได้');
     map.createLayer('solid', tileset, 0, 0);
+    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
 
     for (const spawn of ARENA.dummySpawns) {
       const box: Box = { x: spawn.x, y: spawn.y - PHYSICS.halfHeight, halfWidth: 12, halfHeight: PHYSICS.halfHeight };
@@ -90,85 +94,127 @@ export class GameScene extends Phaser.Scene {
       this.dummies.push({ box, view });
     }
 
-    const spawn = ARENA.playerSpawns[0] ?? { x: 64, y: 64 };
-    this.player = createPlayer(spawn.x, spawn.y);
-    this.prevX = this.player.x;
-    this.prevY = this.player.y;
-
-    const body = this.add
-      .rectangle(0, 0, PHYSICS.halfWidth * 2, PHYSICS.halfHeight * 2, COLOR.body)
-      .setStrokeStyle(2, COLOR.bodyEdge);
-    this.visor = this.add.rectangle(3, -12, 14, 6, COLOR.visor);
-    this.gun = this.add.rectangle(0, PHYSICS.shoulderY, GUN_LENGTH, 6, COLOR.gun).setOrigin(0, 0.5);
-    this.playerView = this.add.container(this.player.x, this.player.y, [body, this.visor, this.gun]);
-
-    const camera = this.cameras.main;
-    camera.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-    camera.startFollow(this.playerView, true, 0.15, 0.15);
-
     this.debug = this.add.graphics().setDepth(10);
     this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.H).on('down', () => {
       this.debugOn = !this.debugOn;
     });
-
     this.hud = this.add
       .text(12, 10, '', { fontFamily: 'monospace', fontSize: '16px', color: '#e8e8e8' })
       .setScrollFactor(0)
       .setDepth(20);
-
     this.inputs = new InputSampler(this);
+
+    void this.connect();
   }
 
-  update(_time: number, deltaMs: number): void {
-    this.accumulator += deltaMs / 1000;
-    let steps = 0;
-    while (this.accumulator >= DT && steps < MAX_STEPS_PER_FRAME) {
-      this.prevX = this.player.x;
-      this.prevY = this.player.y;
-      const shot = stepPlayer(this.player, this.inputs.sample(this.aimAngle()), ARENA, CTX);
-      if (shot && !CTX.isReplay) this.showShot(shot);
-      this.accumulator -= DT;
-      steps++;
+  private async connect(): Promise<void> {
+    setStatus(`กำลังต่อเซิร์ฟเวอร์ ${SERVER_URL} …`);
+    let net: NetSession;
+    try {
+      net = await connectToGame();
+    } catch (error) {
+      console.error(error);
+      setStatus(`ต่อเซิร์ฟเวอร์ไม่ได้ (${SERVER_URL}) เปิดเซิร์ฟเวอร์ด้วย pnpm dev:server แล้วรีเฟรชหน้านี้`);
+      return;
     }
-    if (this.accumulator >= DT) this.accumulator = 0;
+    this.net = net;
+    setStatus(null);
 
-    // วาดตัวละครระหว่างตำแหน่ง tick ก่อนกับ tick ล่าสุด ภาพจะลื่นแม้เกมเดินแค่ 30 tick
-    const alpha = this.accumulator / DT;
-    this.playerView.setPosition(
-      Phaser.Math.Linear(this.prevX, this.player.x, alpha),
-      Phaser.Math.Linear(this.prevY, this.player.y, alpha),
-    );
-    const aim = this.aimAngle();
-    this.gun.setRotation(aim);
-    this.visor.x = Math.cos(aim) >= 0 ? 3 : -3;
+    const { room, input, predict, callbacks } = net;
+    // ชนิดของพารามิเตอร์ใน callback นี้ TypeScript อนุมานไม่ได้ (ได้ unknown) จึงอ่านผู้เล่นจาก room.state ที่มีชนิดชัดเจนแทน
+    callbacks.onAdd('players', (_entity, key) => {
+      const sessionId = String(key);
+      const entity = room.state.players.get(sessionId);
+      if (!entity) return;
+      const isMe = sessionId === room.sessionId;
+      this.addView(sessionId, entity, isMe);
+      if (!isMe) return;
+      const me = predict.reconciler(entity, {
+        input,
+        step: (ctx, state, cmd) => {
+          const shot = stepPlayer(state, cmd, ARENA, ctx);
+          // เอฟเฟกต์เล่นเฉพาะ step จริง ไม่เล่นซ้ำตอนคำนวณย้อนเพื่อแก้ตำแหน่ง
+          if (shot && !ctx.isReplay) this.showShot(shot);
+        },
+        smoothMs: 65,
+        warnOnDivergence: 1,
+      });
+      this.myState = () => me.state;
+    });
+    callbacks.onRemove('players', (_entity, key) => this.removeView(String(key)));
+    // เน็ตหลุดชั่วคราว: SDK พยายามต่อใหม่เอง ถ้าไม่สำเร็จจะเป็น onLeave แล้วหยุดส่ง input ทั้งหมด
+    room.onDrop(() => setStatus('เน็ตหลุด กำลังต่อใหม่…'));
+    room.onReconnect(() => setStatus(null));
+    room.onLeave((code) => {
+      this.net = null;
+      this.myState = null;
+      setStatus(`หลุดจากเซิร์ฟเวอร์ (code ${code}) รีเฟรชหน้านี้เพื่อเข้าใหม่`);
+    });
+  }
 
-    this.updateHud();
+  update(): void {
+    const net = this.net;
+    // ยังไม่ได้เข้าห้อง หรือยังไม่ได้สร้างตัวทำนายของตัวเอง: ยังไม่ส่ง input ไม่งั้นเซิร์ฟเวอร์จะได้ input ที่ client ไม่ได้บันทึกไว้
+    if (!net || !this.myState) return;
+
+    // 1) ถึงเวลากี่ fixed step แล้ว 2) ส่ง input ทีละ step 3) ค่อยอ่านค่ามาวาด
+    const steps = net.predict.tick();
+    for (let i = 0; i < steps; i++) {
+      Object.assign(net.input.data, this.inputs.sample(this.aimAngle()));
+      net.input.send();
+    }
+
+    const myAim = this.aimAngle();
+    for (const view of this.views.values()) {
+      view.container.setPosition(net.predict.value(view.entity, 'x'), net.predict.value(view.entity, 'y'));
+      const aim = view.isMe ? myAim : net.predict.value(view.entity, 'aim');
+      view.gun.setRotation(aim);
+      view.visor.x = Math.cos(aim) >= 0 ? 3 : -3;
+    }
+
+    this.updateHud(net);
     this.drawDebug();
   }
 
   /**
    * มุมจากไหล่ไปหาเมาส์ในพิกัดโลก
-   * - วัดจากตำแหน่งจริงใน state (จุดเดียวกับที่กระสุนออก) ไม่ใช่ตำแหน่งภาพที่ lerp ตามหลังอยู่
+   * - วัดจาก state ที่ทำนายไว้ (จุดเดียวกับที่กระสุนออก) ไม่ใช่ตำแหน่งภาพที่ถูกทำให้ลื่น
    * - คิดจาก scroll ของกล้องเอง ไม่ใช้ getWorldPoint เพราะจะติดแรงจอสั่นมาด้วย (กล้องเกมนี้ไม่ซูม)
    */
   private aimAngle(): number {
+    if (!this.myState) return 0;
+    const state = this.myState();
     const pointer = this.input.activePointer;
     const camera = this.cameras.main;
     const worldX = camera.scrollX + pointer.x;
     const worldY = camera.scrollY + pointer.y;
-    return Math.atan2(worldY - (this.player.y + PHYSICS.shoulderY), worldX - this.player.x);
+    return Math.atan2(worldY - (state.y + PHYSICS.shoulderY), worldX - state.x);
   }
 
-  /** เอฟเฟกต์ฝั่ง client: ใน demo เล่นคนเดียวยังไม่มี replay พอต่อออนไลน์ต้องอยู่ใน if (!ctx.isReplay) */
+  private addView(sessionId: string, entity: PlayerEntity, isMe: boolean): void {
+    const body = this.add
+      .rectangle(0, 0, PHYSICS.halfWidth * 2, PHYSICS.halfHeight * 2, isMe ? COLOR.me : COLOR.other)
+      .setStrokeStyle(2, isMe ? COLOR.meEdge : COLOR.otherEdge);
+    const visor = this.add.rectangle(3, -12, 14, 6, COLOR.visor);
+    const gun = this.add.rectangle(0, PHYSICS.shoulderY, GUN_LENGTH, 6, COLOR.gun).setOrigin(0, 0.5);
+    const container = this.add.container(entity.x, entity.y, [body, visor, gun]).setDepth(isMe ? 4 : 3);
+    this.views.set(sessionId, { entity, isMe, container, gun, visor });
+    if (isMe) this.cameras.main.startFollow(container, true, 0.15, 0.15);
+  }
+
+  private removeView(sessionId: string): void {
+    this.views.get(sessionId)?.container.destroy();
+    this.views.delete(sessionId);
+  }
+
+  /** เฟส 2 ยิงได้แค่เป้าซ้อมในเครื่องตัวเอง เฟส 3 เซิร์ฟเวอร์จะตัดสินการยิงโดนผู้เล่นด้วย resolveShot */
   private showShot(shot: ShotEvent): void {
     const weapon = WEAPONS[shot.weapon];
     const boxes = this.dummies.map((dummy) => dummy.box);
     shot.angles.forEach((angle, pellet) => {
       const hit = resolveShot(ARENA, shot.x, shot.y, angle, weapon.range, boxes);
       const muzzle = Math.min(GUN_LENGTH, hit.dist);
-      const x1 = shot.x + Math.cos(angle) * muzzle;
-      const y1 = shot.y + Math.sin(angle) * muzzle;
-      this.tracer(x1, y1, hit.endX, hit.endY);
+      this.tracer(shot.x + Math.cos(angle) * muzzle, shot.y + Math.sin(angle) * muzzle, hit.endX, hit.endY);
       this.debugShots.push({ x1: shot.x, y1: shot.y, x2: hit.endX, y2: hit.endY });
 
       const dummy = this.dummies[hit.target];
@@ -212,15 +258,24 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: label, y: label.y - 30, alpha: 0, duration: 600, onComplete: () => label.destroy() });
   }
 
-  private updateHud(): void {
+  private updateHud(net: NetSession): void {
+    const current = this.myState ? weaponOf(this.myState()) : 'pistol';
     const slots = WEAPON_SLOTS.map((id, i) => {
       const name = `${i + 1} ${WEAPONS[id].label}`;
-      return id === this.player.weapon ? `[${name}]` : ` ${name} `;
+      return id === current ? `[${name}]` : ` ${name} `;
     }).join(' ');
-    this.hud.setText(`${slots}\nH: hitbox ${this.debugOn ? 'ON' : 'off'}`);
+    const ping = Math.round(net.room.clock.rtt());
+    this.hud.setText(
+      `${slots}\nping ${ping} ms · players ${net.room.state.players.size} · room ${net.room.roomId}\nH: hitbox ${this.debugOn ? 'ON' : 'off'}`,
+    );
   }
 
-  /** โหมด debug (กด H): กรอบชนของ tile ผู้เล่น เป้า และเส้นกระสุนล่าสุด จากค่าจริงใน state */
+  /**
+   * โหมด debug (กด H):
+   * - เขียว = tile ที่ชนได้ · เหลือง = เป้าซ้อม · แดง = เส้นกระสุนล่าสุด
+   * - ม่วง = ตัวเราที่ทำนายไว้ · ฟ้า = ตำแหน่งจริงล่าสุดจากเซิร์ฟเวอร์ (ทุกคน)
+   * ถ้าม่วงกับฟ้าห่างกันตลอดเวลาแม้ยืนนิ่ง แปลว่าฟิสิกส์สองฝั่งไม่ตรงกัน
+   */
   private drawDebug(): void {
     const g = this.debug;
     g.clear();
@@ -239,9 +294,17 @@ export class GameScene extends Phaser.Scene {
       g.strokeRect(box.x - box.halfWidth, box.y - box.halfHeight, box.halfWidth * 2, box.halfHeight * 2);
     }
 
-    const box = playerBox(this.player);
-    g.lineStyle(2, 0xff00ff, 1);
-    g.strokeRect(box.x - box.halfWidth, box.y - box.halfHeight, box.halfWidth * 2, box.halfHeight * 2);
+    const w = PHYSICS.halfWidth * 2;
+    const h = PHYSICS.halfHeight * 2;
+    g.lineStyle(1, 0x40c8ff, 1);
+    for (const view of this.views.values()) {
+      g.strokeRect(view.entity.x - PHYSICS.halfWidth, view.entity.y - PHYSICS.halfHeight, w, h);
+    }
+    if (this.myState) {
+      const me = this.myState();
+      g.lineStyle(2, 0xff00ff, 1);
+      g.strokeRect(me.x - PHYSICS.halfWidth, me.y - PHYSICS.halfHeight, w, h);
+    }
 
     g.lineStyle(1, 0xff4040, 0.8);
     for (const s of this.debugShots) g.lineBetween(s.x1, s.y1, s.x2, s.y2);

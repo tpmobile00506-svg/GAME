@@ -95,6 +95,24 @@ export function parseTiledMap(json: unknown): GameMap {
   return { width, height, tileSize, solid, playerSpawns, dummySpawns };
 }
 
+/**
+ * เลือกจุดเกิดที่ห่างจากผู้เล่นคนอื่นมากที่สุด (วัดถึงคนที่ใกล้จุดนั้นที่สุด)
+ * ถ้าไม่มีใครเลยใช้จุดแรก ผลลัพธ์ขึ้นกับข้อมูลที่ส่งเข้ามาอย่างเดียว ไม่มีการสุ่ม
+ */
+export function pickSpawn(spawns: readonly Point[], others: readonly Point[]): Point {
+  let best = spawns[0] ?? { x: 0, y: 0 };
+  let bestDistance = -1;
+  for (const spawn of spawns) {
+    let nearest = Infinity;
+    for (const other of others) nearest = Math.min(nearest, Math.hypot(spawn.x - other.x, spawn.y - other.y));
+    if (nearest > bestDistance) {
+      bestDistance = nearest;
+      best = spawn;
+    }
+  }
+  return best;
+}
+
 /** แมพแรกของเกม: ARENA_TILED ส่งให้ Phaser วาดภาพ ส่วน ARENA ใช้คำนวณการชน */
 export const ARENA_TILED: object = arenaJson;
 export const ARENA: GameMap = parseTiledMap(arenaJson);

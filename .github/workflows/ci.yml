@@ -1,0 +1,22 @@
+# เช็กโค้ดอัตโนมัติทุกครั้งที่ push หรือเปิด Pull Request
+# ผ่าน = typecheck ทั้ง 3 แพ็กเกจผ่าน และ unit test ของ shared ผ่าน
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # ใช้ pnpm เวอร์ชันตาม packageManager ใน package.json
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
